@@ -1,0 +1,4 @@
+AeroMCP
+src/*.o
+../fan-watch/imgui/*.o
+../fan-watch/imgui/backends/*.o
