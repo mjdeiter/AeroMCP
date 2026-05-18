@@ -326,15 +326,20 @@ static void renderSidebar(float h) {
     ImGui::TextUnformatted("AeroMCP v1.0");
     ImGui::PopStyleColor();
 
-    // Model selector
+    // Model selector (Pro requires billing)
     ImGui::SameLine();
     ImGui::SetNextItemWidth(-1);
     GeminiModel cur = g_gemini->getModel();
-    const char* items[] = { "Fast", "Thinking", "Pro" };
     int sel = (int)cur;
-    if (ImGui::Combo("##model", &sel, items, 3)) {
-        g_gemini->setModel((GeminiModel)sel);
-        g_config->set("model", std::to_string(sel));
+    if (sel > 1) { sel = 0; g_gemini->setModel(GeminiModel::Flash); }
+    const char* sel_label = sel == 0 ? "Fast" : "Thinking";
+    if (ImGui::BeginCombo("##model", sel_label)) {
+        if (ImGui::Selectable("Fast",     sel == 0)) { sel = 0; g_gemini->setModel(GeminiModel::Flash);    g_config->set("model", "0"); }
+        if (ImGui::Selectable("Thinking", sel == 1)) { sel = 1; g_gemini->setModel(GeminiModel::Thinking); g_config->set("model", "1"); }
+        ImGui::BeginDisabled(true);
+        ImGui::Selectable("Pro (needs billing)", false);
+        ImGui::EndDisabled();
+        ImGui::EndCombo();
     }
     if (ImGui::IsItemHovered()) {
         ImGui::SetTooltip("%s", modelName((GeminiModel)sel));
@@ -522,12 +527,15 @@ static void renderDragHandle(float h) {
     // Invisible but hoverable 6px-wide strip at the sidebar edge
     ImGui::SetNextWindowPos(ImVec2(g_sidebar_w - 3.0f, 0));
     ImGui::SetNextWindowSize(ImVec2(6.0f, h));
-    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0,0,0,0));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg,  ImVec4(0,0,0,0));
+    ImGui::PushStyleColor(ImGuiCol_Border,     ImVec4(0,0,0,0));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowBorderSize, 0.0f);
     ImGui::Begin("##drag", nullptr,
         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
         ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus);
-    ImGui::PopStyleColor();
+    ImGui::PopStyleVar();
+    ImGui::PopStyleColor(2);
 
     ImGui::InvisibleButton("##dragbtn", ImVec2(6.0f, h));
     if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
@@ -535,9 +543,9 @@ static void renderDragHandle(float h) {
         g_sidebar_w += ImGui::GetIO().MouseDelta.x;
         g_sidebar_w  = std::max(150.0f, std::min(g_sidebar_w, 400.0f));
     }
-    // Draw a subtle line when hovering
+    // Draw highlight line in foreground draw list (screen space, no window clipping)
     if (ImGui::IsItemHovered() || ImGui::IsItemActive()) {
-        ImDrawList* dl = ImGui::GetWindowDrawList();
+        ImDrawList* dl = ImGui::GetForegroundDrawList();
         dl->AddRectFilled(ImVec2(g_sidebar_w - 1.0f, 0), ImVec2(g_sidebar_w + 1.0f, h),
                           IM_COL32(80, 140, 220, 180));
     }
