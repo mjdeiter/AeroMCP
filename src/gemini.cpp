@@ -9,7 +9,7 @@ using json = nlohmann::json;
 GeminiAPI::GeminiAPI(const std::string& api_key) : api_key_(api_key) {}
 
 std::string GeminiAPI::buildApiUrl() {
-    return "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent";
+    return "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent";
 }
 
 // Curl write callback — accumulates full response body
