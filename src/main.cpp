@@ -325,7 +325,7 @@ static void renderInputBar(float x, float w, float y) {
 
     bool send = false;
     ImGui::SetNextItemWidth(w - 90.0f);
-    if (!g_waiting_reply) ImGui::SetKeyboardFocusHere();
+    
     send = ImGui::InputText("##msg", g_input_buf, sizeof(g_input_buf),
                             ImGuiInputTextFlags_EnterReturnsTrue);
     ImGui::SameLine();
