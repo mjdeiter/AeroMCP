@@ -17,6 +17,8 @@
 #include <cstdlib>
 #include <regex>
 #include <sstream>
+#include <fstream>
+#include <cmath>
 
 // ─── App State ───────────────────────────────────────────────────────────────
 
@@ -46,28 +48,103 @@ static char g_input_buf[4096]  = {};
 static char g_api_key_buf[256] = {};
 static char g_cmd_buf[1024]    = {};
 
-// ─── Code block parsing ───────────────────────────────────────────────────────
+// Layout
+static float g_sidebar_w = 230.0f;
 
-struct CodeBlock {
-    std::string lang;
-    std::string code;
-};
+// Pending attachment
+static std::string g_attach_b64;
+static std::string g_attach_mime;
+static std::string g_attach_name;
 
-static std::vector<CodeBlock> extractCodeBlocks(const std::string& text) {
-    std::vector<CodeBlock> blocks;
-    static const std::regex re("```([a-zA-Z]*)\\n([\\s\\S]*?)```");
-    auto begin = std::sregex_iterator(text.begin(), text.end(), re);
-    auto end   = std::sregex_iterator();
-    for (auto it = begin; it != end; ++it) {
-        CodeBlock b;
-        b.lang = (*it)[1].str();
-        b.code = (*it)[2].str();
-        // trim trailing newline
-        if (!b.code.empty() && b.code.back() == '\n') b.code.pop_back();
-        blocks.push_back(b);
+// ─── Radio wave window icon (16x16 RGBA) ─────────────────────────────────────
+// Hand-crafted signal/radio-wave icon in a 16x16 pixel grid
+static void setRadioWaveIcon(GLFWwindow* win) {
+    // 16x16 RGBA pixels — radio wave pattern
+    static unsigned char pixels[16 * 16 * 4] = {0};
+    // Paint radio wave arcs centred around pixel (8,10)
+    // We'll draw 3 concentric arcs (quarter circles, top half) + a dot
+    auto setpx = [](int x, int y, unsigned char r, unsigned char g, unsigned char b) {
+        if (x < 0 || x >= 16 || y < 0 || y >= 16) return;
+        int i = (y * 16 + x) * 4;
+        pixels[i+0] = r; pixels[i+1] = g; pixels[i+2] = b; pixels[i+3] = 255;
+    };
+    // Clear to transparent
+    memset(pixels, 0, sizeof(pixels));
+
+    // Center dot
+    setpx(8, 11, 100, 200, 255);
+    setpx(7, 11, 100, 200, 255);
+    setpx(8, 12, 100, 200, 255);
+    setpx(7, 12, 100, 200, 255);
+
+    // Inner arc radius ~2.5
+    for (int dx = -3; dx <= 3; dx++) {
+        for (int dy = -3; dy <= 0; dy++) {
+            float d = sqrtf(dx*dx + dy*dy);
+            if (d >= 2.0f && d < 2.8f)
+                setpx(8+dx, 11+dy, 100, 200, 255);
+        }
     }
-    return blocks;
+    // Middle arc radius ~4.5
+    for (int dx = -5; dx <= 5; dx++) {
+        for (int dy = -5; dy <= 0; dy++) {
+            float d = sqrtf(dx*dx + dy*dy);
+            if (d >= 4.0f && d < 4.8f)
+                setpx(8+dx, 11+dy, 80, 160, 220);
+        }
+    }
+    // Outer arc radius ~6.5
+    for (int dx = -7; dx <= 7; dx++) {
+        for (int dy = -7; dy <= 0; dy++) {
+            float d = sqrtf(dx*dx + dy*dy);
+            if (d >= 6.0f && d < 6.8f)
+                setpx(8+dx, 11+dy, 60, 120, 180);
+        }
+    }
+
+    GLFWimage img;
+    img.width  = 16;
+    img.height = 16;
+    img.pixels = pixels;
+    glfwSetWindowIcon(win, 1, &img);
 }
+
+// ─── Base64 encode ────────────────────────────────────────────────────────────
+static std::string base64Encode(const std::vector<unsigned char>& data) {
+    static const char* tbl = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    std::string out;
+    out.reserve(((data.size() + 2) / 3) * 4);
+    for (size_t i = 0; i < data.size(); i += 3) {
+        unsigned int v = data[i] << 16;
+        if (i+1 < data.size()) v |= data[i+1] << 8;
+        if (i+2 < data.size()) v |= data[i+2];
+        out += tbl[(v >> 18) & 63];
+        out += tbl[(v >> 12) & 63];
+        out += (i+1 < data.size()) ? tbl[(v >> 6) & 63] : '=';
+        out += (i+2 < data.size()) ? tbl[v & 63]        : '=';
+    }
+    return out;
+}
+
+static bool loadFileAsBase64(const std::string& path, std::string& b64, std::string& mime) {
+    std::ifstream f(path, std::ios::binary);
+    if (!f) return false;
+    std::vector<unsigned char> buf((std::istreambuf_iterator<char>(f)),
+                                    std::istreambuf_iterator<char>());
+    // Detect mime from extension
+    std::string ext = path.size() > 4 ? path.substr(path.rfind('.')) : "";
+    std::transform(ext.begin(), ext.end(), ext.begin(), ::tolower);
+    if      (ext == ".png")  mime = "image/png";
+    else if (ext == ".jpg" || ext == ".jpeg") mime = "image/jpeg";
+    else if (ext == ".gif")  mime = "image/gif";
+    else if (ext == ".webp") mime = "image/webp";
+    else if (ext == ".pdf")  mime = "application/pdf";
+    else return false; // unsupported
+    b64 = base64Encode(buf);
+    return true;
+}
+
+// ─── Code block parsing ───────────────────────────────────────────────────────
 
 static bool isExecutable(const std::string& lang) {
     static const std::vector<std::string> exec = {"bash","sh","shell","zsh","console","terminal",""};
@@ -100,16 +177,33 @@ static void deleteSession(int id) {
     if (g_active_session == id) { g_active_session = -1; g_messages.clear(); }
 }
 
+static const char* modelName(GeminiModel m) {
+    switch(m) {
+        case GeminiModel::Flash:    return "Gemini 2.5 Flash";
+        case GeminiModel::Thinking: return "Gemini 2.5 Flash (Thinking)";
+        case GeminiModel::Pro:      return "Gemini 2.5 Pro";
+    }
+    return "Unknown";
+}
+
 static std::vector<GeminiMessage> buildHistory() {
+    GeminiModel m = g_gemini->getModel();
     std::vector<GeminiMessage> h;
     h.push_back({"user",
-        "You are AeroMCP, a native desktop AI assistant integrated into the ELITEBOOK system "
-        "of Matt (Matthew Deiter), an Electronics Tech II on CachyOS. You help with system "
-        "administration, homelab tasks, and technical projects. When suggesting commands, wrap "
-        "them in ```bash code blocks so they can be run directly. Be concise and technical."});
+        std::string("You are AeroMCP, a native desktop AI assistant integrated into the ELITEBOOK system "
+        "of Matt (Matthew Deiter), an Electronics Tech II on CachyOS. "
+        "You are running on ") + modelName(m) + ". "
+        "When asked what model you are, say \"" + modelName(m) + "\". "
+        "You help with system administration, homelab tasks, and technical projects. "
+        "When suggesting commands, wrap them in ```bash code blocks so they can be run directly. "
+        "Be concise and technical."
+    });
     h.push_back({"model", "Understood. AeroMCP ready."});
-    for (const auto& m : g_messages) {
-        h.push_back({m.role == "user" ? "user" : "model", m.content});
+    for (const auto& msg : g_messages) {
+        GeminiMessage gm;
+        gm.role    = (msg.role == "user") ? "user" : "model";
+        gm.content = msg.content;
+        h.push_back(gm);
     }
     return h;
 }
@@ -133,14 +227,15 @@ static void runInConsole(const std::string& cmd) {
 static void sendMessage() {
     if (g_active_session < 0) newSession();
     std::string text(g_input_buf);
-    if (text.empty()) return;
+    if (text.empty() && g_attach_b64.empty()) return;
     memset(g_input_buf, 0, sizeof(g_input_buf));
 
-    g_db.addMessage(g_active_session, "user", text);
+    g_db.addMessage(g_active_session, "user", text.empty() ? "[image]" : text);
 
     for (auto& s : g_sessions) {
         if (s.id == g_active_session && s.title == "New Chat") {
-            g_db.updateSessionTitle(g_active_session, text.substr(0, 42));
+            std::string title = text.empty() ? g_attach_name : text.substr(0, 42);
+            g_db.updateSessionTitle(g_active_session, title);
             refreshSessions();
             break;
         }
@@ -152,6 +247,15 @@ static void sendMessage() {
     g_reply_error.clear();
 
     auto history = buildHistory();
+    // Attach image to last user message if present
+    if (!g_attach_b64.empty()) {
+        history.back().image_b64  = g_attach_b64;
+        history.back().image_mime = g_attach_mime;
+    }
+    g_attach_b64.clear();
+    g_attach_mime.clear();
+    g_attach_name.clear();
+
     g_gemini->sendAsync(history, [](std::string chunk, bool done, std::string err) {
         std::lock_guard<std::mutex> lk(g_reply_mutex);
         if (!err.empty()) { g_reply_error = err; g_reply_done = true; return; }
@@ -162,7 +266,6 @@ static void sendMessage() {
 
 // ─── Render helpers ───────────────────────────────────────────────────────────
 
-// Render message content: plain text segments + code blocks with Run buttons
 static void renderMessageContent(const std::string& content, int msg_id) {
     static const std::regex fence_re("```([a-zA-Z]*)\\n([\\s\\S]*?)```");
     std::string remaining = content;
@@ -170,7 +273,6 @@ static void renderMessageContent(const std::string& content, int msg_id) {
     int block_idx = 0;
 
     while (std::regex_search(remaining, m, fence_re)) {
-        // Plain text before block
         std::string before = m.prefix().str();
         if (!before.empty()) ImGui::TextWrapped("%s", before.c_str());
 
@@ -178,7 +280,6 @@ static void renderMessageContent(const std::string& content, int msg_id) {
         std::string code = m[2].str();
         if (!code.empty() && code.back() == '\n') code.pop_back();
 
-        // Code block frame
         ImGui::PushStyleColor(ImGuiCol_ChildBg, ImVec4(0.06f, 0.06f, 0.09f, 1.0f));
         std::string child_id = "##cb_" + std::to_string(msg_id) + "_" + std::to_string(block_idx);
         float child_h = ImGui::GetTextLineHeight() * (std::count(code.begin(), code.end(), '\n') + 2) + 12.0f;
@@ -195,15 +296,14 @@ static void renderMessageContent(const std::string& content, int msg_id) {
         ImGui::EndChild();
         ImGui::PopStyleColor();
 
-        // Run button (only for shell-like blocks)
         if (isExecutable(lang)) {
-            std::string btn_id = "▶ Run##run_" + std::to_string(msg_id) + "_" + std::to_string(block_idx);
+            std::string btn_id  = "▶ Run##run_" + std::to_string(msg_id) + "_" + std::to_string(block_idx);
+            std::string copy_id = "Copy##cp_"   + std::to_string(msg_id) + "_" + std::to_string(block_idx);
             ImGui::PushStyleColor(ImGuiCol_Button,        ImVec4(0.08f, 0.28f, 0.18f, 1.0f));
             ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.12f, 0.42f, 0.25f, 1.0f));
             if (ImGui::SmallButton(btn_id.c_str())) runInConsole(code);
             ImGui::PopStyleColor(2);
             ImGui::SameLine();
-            std::string copy_id = "Copy##cp_" + std::to_string(msg_id) + "_" + std::to_string(block_idx);
             if (ImGui::SmallButton(copy_id.c_str())) ImGui::SetClipboardText(code.c_str());
         }
 
@@ -215,9 +315,9 @@ static void renderMessageContent(const std::string& content, int msg_id) {
 
 // ─── Windows ──────────────────────────────────────────────────────────────────
 
-static void renderSidebar(float w, float h) {
+static void renderSidebar(float h) {
     ImGui::SetNextWindowPos(ImVec2(0, 0));
-    ImGui::SetNextWindowSize(ImVec2(w, h));
+    ImGui::SetNextWindowSize(ImVec2(g_sidebar_w, h));
     ImGui::Begin("##sidebar", nullptr,
         ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus);
@@ -225,6 +325,21 @@ static void renderSidebar(float w, float h) {
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.48f, 0.82f, 1.0f, 1.0f));
     ImGui::TextUnformatted("AeroMCP v1.0");
     ImGui::PopStyleColor();
+
+    // Model selector
+    ImGui::SameLine();
+    ImGui::SetNextItemWidth(-1);
+    GeminiModel cur = g_gemini->getModel();
+    const char* items[] = { "Fast", "Thinking", "Pro" };
+    int sel = (int)cur;
+    if (ImGui::Combo("##model", &sel, items, 3)) {
+        g_gemini->setModel((GeminiModel)sel);
+        g_config->set("model", std::to_string(sel));
+    }
+    if (ImGui::IsItemHovered()) {
+        ImGui::SetTooltip("%s", modelName((GeminiModel)sel));
+    }
+
     ImGui::Separator();
     ImGui::Spacing();
 
@@ -290,14 +405,12 @@ static void renderChat(float x, float w, float chat_h) {
         ImGui::PopStyleColor();
         ImGui::SameLine();
         ImGui::TextDisabled("  %s", msg.created_at.substr(11, 5).c_str());
-
         renderMessageContent(msg.content, msg.id);
         ImGui::Spacing();
         ImGui::Separator();
         ImGui::Spacing();
     }
 
-    // In-progress reply
     if (g_waiting_reply && !g_pending_reply.empty()) {
         ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.56f, 0.93f, 0.56f, 1.0f));
         ImGui::TextUnformatted("AeroMCP");
@@ -323,14 +436,46 @@ static void renderInputBar(float x, float w, float y) {
         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus);
     ImGui::PopStyleColor();
 
-    bool send = false;
-    ImGui::SetNextItemWidth(w - 90.0f);
-    
-    send = ImGui::InputText("##msg", g_input_buf, sizeof(g_input_buf),
-                            ImGuiInputTextFlags_EnterReturnsTrue);
+    // Attachment button
+    ImGui::PushStyleColor(ImGuiCol_Button,
+        g_attach_b64.empty() ? ImVec4(0.10f, 0.28f, 0.48f, 1.0f) : ImVec4(0.08f, 0.40f, 0.20f, 1.0f));
+    if (ImGui::Button(g_attach_b64.empty() ? "📎" : ("📎 " + g_attach_name).c_str())) {
+        // Open file dialog via zenity
+        FILE* fp = popen("zenity --file-selection --title='Attach image' "
+                         "--file-filter='Images | *.png *.jpg *.jpeg *.gif *.webp' 2>/dev/null", "r");
+        if (fp) {
+            char path[1024] = {};
+            if (fgets(path, sizeof(path), fp)) {
+                std::string p(path);
+                if (!p.empty() && p.back() == '\n') p.pop_back();
+                std::string b64, mime;
+                if (loadFileAsBase64(p, b64, mime)) {
+                    g_attach_b64  = b64;
+                    g_attach_mime = mime;
+                    // Extract filename
+                    size_t sl = p.rfind('/');
+                    g_attach_name = (sl != std::string::npos) ? p.substr(sl+1) : p;
+                }
+            }
+            pclose(fp);
+        }
+    }
+    ImGui::PopStyleColor();
+    if (!g_attach_b64.empty() && ImGui::IsItemHovered())
+        ImGui::SetTooltip("Click again to clear attachment");
+    // Second click clears attachment
+    if (!g_attach_b64.empty() && ImGui::IsItemClicked()) {
+        g_attach_b64.clear(); g_attach_mime.clear(); g_attach_name.clear();
+    }
+
+    ImGui::SameLine();
+    float btn_w  = 75.0f;
+    ImGui::SetNextItemWidth(w - btn_w - 50.0f);
+    bool send = ImGui::InputText("##msg", g_input_buf, sizeof(g_input_buf),
+                                 ImGuiInputTextFlags_EnterReturnsTrue);
     ImGui::SameLine();
     ImGui::BeginDisabled(g_waiting_reply);
-    if (ImGui::Button("Send", ImVec2(75, 0)) || send) sendMessage();
+    if (ImGui::Button("Send", ImVec2(btn_w, 0)) || send) sendMessage();
     ImGui::EndDisabled();
     ImGui::End();
 }
@@ -372,13 +517,38 @@ static void renderConsole(float x, float w, float y, float h) {
     ImGui::End();
 }
 
+// ─── Sidebar drag handle ──────────────────────────────────────────────────────
+static void renderDragHandle(float h) {
+    // Invisible but hoverable 6px-wide strip at the sidebar edge
+    ImGui::SetNextWindowPos(ImVec2(g_sidebar_w - 3.0f, 0));
+    ImGui::SetNextWindowSize(ImVec2(6.0f, h));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, ImVec4(0,0,0,0));
+    ImGui::Begin("##drag", nullptr,
+        ImGuiWindowFlags_NoTitleBar | ImGuiWindowFlags_NoResize |
+        ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoScrollbar |
+        ImGuiWindowFlags_NoSavedSettings | ImGuiWindowFlags_NoBringToFrontOnFocus);
+    ImGui::PopStyleColor();
+
+    ImGui::InvisibleButton("##dragbtn", ImVec2(6.0f, h));
+    if (ImGui::IsItemHovered()) ImGui::SetMouseCursor(ImGuiMouseCursor_ResizeEW);
+    if (ImGui::IsItemActive()) {
+        g_sidebar_w += ImGui::GetIO().MouseDelta.x;
+        g_sidebar_w  = std::max(150.0f, std::min(g_sidebar_w, 400.0f));
+    }
+    // Draw a subtle line when hovering
+    if (ImGui::IsItemHovered() || ImGui::IsItemActive()) {
+        ImDrawList* dl = ImGui::GetWindowDrawList();
+        dl->AddRectFilled(ImVec2(g_sidebar_w - 1.0f, 0), ImVec2(g_sidebar_w + 1.0f, h),
+                          IM_COL32(80, 140, 220, 180));
+    }
+    ImGui::End();
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────────
 
 int main() {
-    // Config
     g_config = new Config();
 
-    // GLFW
     if (!glfwInit()) return 1;
     glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
     glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 3);
@@ -387,14 +557,13 @@ int main() {
     if (!win) return 1;
     glfwMakeContextCurrent(win);
     glfwSwapInterval(1);
+    setRadioWaveIcon(win);
 
-    // ImGui
     IMGUI_CHECKVERSION();
     ImGui::CreateContext();
     ImGuiIO& io = ImGui::GetIO();
     io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
 
-    // Font — Hack Regular 15px
     ImFontConfig fc;
     fc.OversampleH = 2; fc.OversampleV = 2;
     const char* font_path = "/usr/share/fonts/TTF/Hack-Regular.ttf";
@@ -403,7 +572,6 @@ int main() {
     else
         io.Fonts->AddFontDefault();
 
-    // Style
     ImGui::StyleColorsDark();
     ImGuiStyle& st = ImGui::GetStyle();
     st.WindowRounding = 3.0f; st.FrameRounding = 3.0f; st.ScrollbarRounding = 3.0f;
@@ -422,21 +590,20 @@ int main() {
     ImGui_ImplGlfw_InitForOpenGL(win, true);
     ImGui_ImplOpenGL3_Init("#version 330");
 
-    // DB
     std::string home = g_config->get("home", getenv("HOME") ? getenv("HOME") : "/home/matt");
     g_db.open(home + "/.config/aeromcp/aeromcp.db");
     refreshSessions();
 
-    // Gemini — restore saved API key
-    std::string saved_key = g_config->get("api_key", "");
+    std::string saved_key   = g_config->get("api_key", "");
+    std::string saved_model = g_config->get("model", "0");
     g_gemini = new GeminiAPI(saved_key);
+    g_gemini->setModel((GeminiModel)std::stoi(saved_model));
     if (!saved_key.empty())
         strncpy(g_api_key_buf, saved_key.c_str(), sizeof(g_api_key_buf) - 1);
 
     if (!g_sessions.empty()) loadSession(g_sessions[0].id);
     else newSession();
 
-    const float SIDEBAR_W = 230.0f;
     const float CONSOLE_H = 230.0f;
     const float INPUT_H   = 58.0f;
 
@@ -445,19 +612,18 @@ int main() {
         int fw, fh;
         glfwGetFramebufferSize(win, &fw, &fh);
         float W = (float)fw, H = (float)fh;
-        float chat_w  = W - SIDEBAR_W;
-        float chat_h  = H - CONSOLE_H - INPUT_H;
-        float input_y = chat_h;
-        float cons_y  = chat_h + INPUT_H;
+        float chat_w = W - g_sidebar_w;
+        float chat_h = H - CONSOLE_H - INPUT_H;
 
         ImGui_ImplOpenGL3_NewFrame();
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
-        renderSidebar(SIDEBAR_W, H);
-        renderChat(SIDEBAR_W, chat_w, chat_h);
-        renderInputBar(SIDEBAR_W, chat_w, input_y);
-        renderConsole(SIDEBAR_W, chat_w, cons_y, CONSOLE_H);
+        renderSidebar(H);
+        renderDragHandle(H);
+        renderChat(g_sidebar_w, chat_w, chat_h);
+        renderInputBar(g_sidebar_w, chat_w, chat_h);
+        renderConsole(g_sidebar_w, chat_w, chat_h + INPUT_H, CONSOLE_H);
 
         ImGui::Render();
         glViewport(0, 0, fw, fh);
