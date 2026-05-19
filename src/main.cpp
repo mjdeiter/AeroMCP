@@ -546,18 +546,15 @@ static void renderSidebar(float h) {
     ImGui::SetNextItemWidth(-1);
     GeminiModel cur = g_gemini->getModel();
     int sel = (int)cur;
-    if (sel > 1) { sel = 0; g_gemini->setModel(GeminiModel::Flash); }
-    const char* sel_label = sel == 0 ? "Fast" : "Thinking";
+    const char* sel_label = sel == 0 ? "Fast" : sel == 1 ? "Thinking" : "Pro *";
     if (ImGui::BeginCombo("##model", sel_label)) {
-        if (ImGui::Selectable("Fast",     sel == 0)) { sel = 0; g_gemini->setModel(GeminiModel::Flash);    g_config->set("model", "0"); }
-        if (ImGui::Selectable("Thinking", sel == 1)) { sel = 1; g_gemini->setModel(GeminiModel::Thinking); g_config->set("model", "1"); }
-        ImGui::BeginDisabled(true);
-        ImGui::Selectable("Pro (needs billing)", false);
-        ImGui::EndDisabled();
+        if (ImGui::Selectable("Fast",      sel == 0)) { sel = 0; g_gemini->setModel(GeminiModel::Flash);    g_config->set("model", "0"); }
+        if (ImGui::Selectable("Thinking",  sel == 1)) { sel = 1; g_gemini->setModel(GeminiModel::Thinking); g_config->set("model", "1"); }
+        if (ImGui::Selectable("Pro *",     sel == 2)) { sel = 2; g_gemini->setModel(GeminiModel::Pro);      g_config->set("model", "2"); }
         ImGui::EndCombo();
     }
     if (ImGui::IsItemHovered()) {
-        ImGui::SetTooltip("%s", modelName((GeminiModel)sel));
+        ImGui::SetTooltip("* Pro requires billing on your Gemini project\nFast/Thinking work on free tier");
     }
 
     ImGui::Separator();
