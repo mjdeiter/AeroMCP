@@ -1,4 +1,6 @@
-# AeroMCP ✈️
+# AeroMCP
+
+![AeroMCP Logo](logo.png)
 
 A native desktop AI assistant for Linux, powered by Google Gemini and built with Dear ImGui. Designed for the ELITEBOOK homelab system but works on any Linux machine.
 
