@@ -10,8 +10,6 @@ A native desktop AI assistant for Linux, powered by Google Gemini and built with
 - **Integrated console** — run bash commands directly from the chat interface with ▶ Run buttons on code blocks
 - **Image attachments** — attach PNG/JPG/WebP images to your messages via file picker
 - **Persistent sessions** — conversation history stored in SQLite, survives restarts
-- **Draggable sidebar** — resize the session panel to your liking
-- **AeroMCP logo icon** — custom window icon
 
 ## Requirements
 
