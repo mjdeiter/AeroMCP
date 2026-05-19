@@ -56,49 +56,46 @@ static std::string g_attach_b64;
 static std::string g_attach_mime;
 static std::string g_attach_name;
 
-// ─── Radio wave window icon (16x16 RGBA) ─────────────────────────────────────
-// Hand-crafted signal/radio-wave icon in a 16x16 pixel grid
+// ─── Military jet icon (16x16 RGBA) ──────────────────────────────────────────
+// Side-view military jet, nose-right, swept wings, twin tail fins
 static void setRadioWaveIcon(GLFWwindow* win) {
-    // 16x16 RGBA pixels — radio wave pattern
-    static unsigned char pixels[16 * 16 * 4] = {0};
-    // Paint radio wave arcs centred around pixel (8,10)
-    // We'll draw 3 concentric arcs (quarter circles, top half) + a dot
-    auto setpx = [](int x, int y, unsigned char r, unsigned char g, unsigned char b) {
-        if (x < 0 || x >= 16 || y < 0 || y >= 16) return;
-        int i = (y * 16 + x) * 4;
-        pixels[i+0] = r; pixels[i+1] = g; pixels[i+2] = b; pixels[i+3] = 255;
+    // Row-major pixel map: 1=fuselage, 2=wing, 3=tail, 0=transparent
+    // Jet flies left→right, centred vertically around rows 7-9
+    static const unsigned char map[16][16] = {
+        { 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 }, // 0
+        { 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 }, // 1
+        { 0,0,0,0,0,0,0,0,0,0,0,3,3,0,0,0 }, // 2  upper tail fin
+        { 0,0,0,0,0,0,0,0,0,0,0,3,3,1,0,0 }, // 3
+        { 0,0,0,0,0,0,0,0,2,2,1,1,1,1,1,0 }, // 4  upper wing + fuselage
+        { 0,0,0,1,1,1,1,1,1,1,1,1,1,1,1,1 }, // 5  main fuselage + nose
+        { 0,1,1,1,2,2,2,2,2,1,1,1,1,1,1,0 }, // 6  swept wing
+        { 0,0,0,0,0,0,0,0,0,0,1,1,1,1,0,0 }, // 7  lower fuselage
+        { 0,0,0,0,0,0,0,0,0,0,0,3,3,0,0,0 }, // 8  lower tail fin
+        { 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 }, // 9
+        { 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 }, // 10
+        { 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 }, // 11
+        { 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 }, // 12
+        { 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 }, // 13
+        { 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 }, // 14
+        { 0,0,0,0,0,0,0,0,0,0,0,0,0,0,0,0 }, // 15
     };
-    // Clear to transparent
+
+    static unsigned char pixels[16 * 16 * 4];
     memset(pixels, 0, sizeof(pixels));
 
-    // Center dot
-    setpx(8, 11, 100, 200, 255);
-    setpx(7, 11, 100, 200, 255);
-    setpx(8, 12, 100, 200, 255);
-    setpx(7, 12, 100, 200, 255);
-
-    // Inner arc radius ~2.5
-    for (int dx = -3; dx <= 3; dx++) {
-        for (int dy = -3; dy <= 0; dy++) {
-            float d = sqrtf(dx*dx + dy*dy);
-            if (d >= 2.0f && d < 2.8f)
-                setpx(8+dx, 11+dy, 100, 200, 255);
-        }
-    }
-    // Middle arc radius ~4.5
-    for (int dx = -5; dx <= 5; dx++) {
-        for (int dy = -5; dy <= 0; dy++) {
-            float d = sqrtf(dx*dx + dy*dy);
-            if (d >= 4.0f && d < 4.8f)
-                setpx(8+dx, 11+dy, 80, 160, 220);
-        }
-    }
-    // Outer arc radius ~6.5
-    for (int dx = -7; dx <= 7; dx++) {
-        for (int dy = -7; dy <= 0; dy++) {
-            float d = sqrtf(dx*dx + dy*dy);
-            if (d >= 6.0f && d < 6.8f)
-                setpx(8+dx, 11+dy, 60, 120, 180);
+    for (int y = 0; y < 16; y++) {
+        for (int x = 0; x < 16; x++) {
+            int i = (y * 16 + x) * 4;
+            switch (map[y][x]) {
+                case 1: // fuselage — steel blue
+                    pixels[i+0]=140; pixels[i+1]=190; pixels[i+2]=220; pixels[i+3]=255; break;
+                case 2: // wing — slightly darker
+                    pixels[i+0]=100; pixels[i+1]=150; pixels[i+2]=190; pixels[i+3]=255; break;
+                case 3: // tail fin — accent cyan
+                    pixels[i+0]=80;  pixels[i+1]=200; pixels[i+2]=240; pixels[i+3]=255; break;
+                default:
+                    pixels[i+3]=0; break;
+            }
         }
     }
 
@@ -323,7 +320,7 @@ static void renderSidebar(float h) {
         ImGuiWindowFlags_NoMove | ImGuiWindowFlags_NoBringToFrontOnFocus);
 
     ImGui::PushStyleColor(ImGuiCol_Text, ImVec4(0.48f, 0.82f, 1.0f, 1.0f));
-    ImGui::TextUnformatted("AeroMCP v1.0");
+    ImGui::TextUnformatted("AeroMCP v1.1");
     ImGui::PopStyleColor();
 
     // Model selector (Pro requires billing)
