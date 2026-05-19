@@ -41,6 +41,7 @@ static std::string       g_pending_reply;
 // Console
 static std::mutex        g_exec_mutex;
 static std::string       g_exec_output;
+static bool              g_exec_scroll_bottom = false;
 static std::atomic<bool> g_exec_running{false};
 
 // Input
@@ -429,6 +430,7 @@ static void runInConsole(const std::string& cmd) {
     {
         std::lock_guard<std::mutex> lk(g_exec_mutex);
         g_exec_output = "$ " + cmd + "\n";
+    g_exec_scroll_bottom = true;
     }
     Executor::runAsync(cmd, [](ExecResult r) {
         std::lock_guard<std::mutex> lk(g_exec_mutex);
@@ -729,7 +731,10 @@ static void renderConsole(float x, float w, float y, float h) {
         ImGui::TextUnformatted(g_exec_output.c_str());
         ImGui::PopStyleColor();
     }
-    ImGui::SetScrollHereY(1.0f);
+    if (g_exec_scroll_bottom) {
+        ImGui::SetScrollHereY(1.0f);
+        g_exec_scroll_bottom = false;
+    }
     ImGui::EndChild();
     ImGui::End();
 }
