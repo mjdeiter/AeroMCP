@@ -7,7 +7,7 @@ A native desktop AI assistant for Linux, powered by Google Gemini and built with
 ## Features
 
 - **Fast, Thinking, and Pro model modes** — switch between Gemini 2.5 Flash, Flash Thinking, and 2.5 Pro
-- **Integrated console** — run bash commands directly from the chat interface with ▶ Run buttons on code blocks
+- **Integrated console** — run bash commands directly from the chat interface
 - **Image attachments** — attach PNG/JPG/WebP images to your messages via file picker
 - **Persistent sessions** — conversation history stored in SQLite, survives restarts
 
